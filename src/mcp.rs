@@ -21,8 +21,6 @@ pub struct Server {
 pub struct ExecuteParams {
     /// Luau source. Runs in MacSploit's executor environment; `return` values are sent back.
     code: String,
-    /// Target session id. Only needed when multiple Roblox clients are connected.
-    session: Option<String>,
     /// Seconds to wait for the script to finish. Default 30.
     timeout_secs: Option<u64>,
 }
@@ -53,11 +51,7 @@ impl Server {
         Parameters(p): Parameters<ExecuteParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let wait = Duration::from_secs(p.timeout_secs.unwrap_or(30).clamp(1, 600));
-        let output = match self
-            .broker
-            .execute(p.code, p.session.as_deref(), wait)
-            .await
-        {
+        let output = match self.broker.execute(p.code, wait).await {
             Ok(result) => ExecuteOutput {
                 ok: result.ok,
                 returns: result.returns,

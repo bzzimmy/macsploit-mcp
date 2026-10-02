@@ -9,7 +9,6 @@ while not Players.LocalPlayer do Players:GetPropertyChangedSignal("LocalPlayer")
 
 local HttpService = game:GetService("HttpService")
 local BASE = "http://127.0.0.1:8766"
-local SESSION = HttpService:GenerateGUID(false)
 local HEADERS = {["Content-Type"] = "application/json"}
 local baseEnv = getfenv(1)
 
@@ -55,12 +54,7 @@ end
 task.spawn(function()
 	local backoff = 1
 	while genv.__macsploit_mcp do
-		local ok, res = pcall(post, "/poll", {
-			session = SESSION,
-			user = Players.LocalPlayer.Name,
-			placeId = game.PlaceId,
-			jobId = game.JobId,
-		})
+		local ok, res = pcall(post, "/poll", {})
 		if ok and res.StatusCode == 200 then
 			backoff = 1
 			task.spawn(run, HttpService:JSONDecode(res.Body))

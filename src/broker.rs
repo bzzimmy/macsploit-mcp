@@ -1,26 +1,17 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
 
 const POLL_HOLD: Duration = Duration::from_secs(10);
-const SESSION_TTL: Duration = Duration::from_secs(30);
+const BRIDGE_TTL: Duration = Duration::from_secs(30);
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionInfo {
-    pub session: String,
-    pub user: String,
-    pub place_id: u64,
-    pub job_id: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Job {
     pub id: u64,
     pub code: String,
@@ -37,70 +28,64 @@ pub struct JobResult {
     pub error: Option<String>,
 }
 
-struct Session {
-    info: SessionInfo,
-    tx: mpsc::UnboundedSender<Job>,
-    rx: Arc<Mutex<mpsc::UnboundedReceiver<Job>>>,
-    last_seen: Instant,
-}
-
-#[derive(Default)]
 pub struct Broker {
-    sessions: Mutex<HashMap<String, Session>>,
+    tx: mpsc::UnboundedSender<Job>,
+    rx: tokio::sync::Mutex<mpsc::UnboundedReceiver<Job>>,
     pending: Mutex<HashMap<u64, oneshot::Sender<JobResult>>>,
+    last_poll: Mutex<Option<Instant>>,
     next_id: AtomicU64,
 }
 
+impl Default for Broker {
+    fn default() -> Self {
+        let (tx, rx) = mpsc::unbounded_channel();
+        Self {
+            tx,
+            rx: tokio::sync::Mutex::new(rx),
+            pending: Mutex::default(),
+            last_poll: Mutex::default(),
+            next_id: AtomicU64::default(),
+        }
+    }
+}
+
 impl Broker {
-    pub async fn poll(&self, info: SessionInfo) -> Option<Job> {
-        let rx = {
-            let mut sessions = self.sessions.lock().await;
-            let session = sessions.entry(info.session.clone()).or_insert_with(|| {
-                eprintln!("bridge connected: {} in place {}", info.user, info.place_id);
-                let (tx, rx) = mpsc::unbounded_channel();
-                Session {
-                    info: info.clone(),
-                    tx,
-                    rx: Arc::new(Mutex::new(rx)),
-                    last_seen: Instant::now(),
-                }
-            });
-            session.info = info;
-            session.last_seen = Instant::now();
-            session.rx.clone()
-        };
-        let mut rx = rx.lock().await;
-        timeout(POLL_HOLD, rx.recv()).await.ok().flatten()
+    pub async fn poll(&self) -> Option<Job> {
+        if !self.connected() {
+            eprintln!("bridge connected");
+        }
+        *self.last_poll.lock().unwrap() = Some(Instant::now());
+        let mut rx = self.rx.lock().await;
+        let deadline = tokio::time::Instant::now() + POLL_HOLD;
+        while let Ok(Some(job)) = tokio::time::timeout_at(deadline, rx.recv()).await {
+            if self.pending.lock().unwrap().contains_key(&job.id) {
+                return Some(job);
+            }
+        }
+        None
     }
 
-    pub async fn complete(&self, result: JobResult) {
-        if let Some(tx) = self.pending.lock().await.remove(&result.id) {
+    pub fn complete(&self, result: JobResult) {
+        if let Some(tx) = self.pending.lock().unwrap().remove(&result.id) {
             let _ = tx.send(result);
         }
     }
 
-    pub async fn sessions(&self) -> Vec<SessionInfo> {
-        let mut sessions = self.sessions.lock().await;
-        sessions.retain(|_, s| s.last_seen.elapsed() < SESSION_TTL);
-        sessions.values().map(|s| s.info.clone()).collect()
-    }
-
-    pub async fn execute(
-        &self,
-        code: String,
-        session: Option<&str>,
-        wait: Duration,
-    ) -> Result<JobResult> {
-        let tx = self.pick(session).await?;
+    pub async fn execute(&self, code: String, wait: Duration) -> Result<JobResult> {
+        if !self.connected() {
+            bail!(
+                "No Roblox client connected. Open Roblox with MacSploit and join a game; \
+                 if the bridge was just installed, rejoin once so autoexec runs it."
+            );
+        }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (done_tx, done_rx) = oneshot::channel();
-        self.pending.lock().await.insert(id, done_tx);
-        tx.send(Job { id, code })
-            .map_err(|_| anyhow!("Session disconnected before the script was sent."))?;
+        self.pending.lock().unwrap().insert(id, done_tx);
+        let _ = self.tx.send(Job { id, code });
         match timeout(wait, done_rx).await {
             Ok(Ok(result)) => Ok(result),
             _ => {
-                self.pending.lock().await.remove(&id);
+                self.pending.lock().unwrap().remove(&id);
                 bail!(
                     "No result after {}s. The script may still be running in game.",
                     wait.as_secs()
@@ -109,39 +94,10 @@ impl Broker {
         }
     }
 
-    async fn pick(&self, session: Option<&str>) -> Result<mpsc::UnboundedSender<Job>> {
-        let live = self.sessions().await;
-        let sessions = self.sessions.lock().await;
-        if let Some(id) = session {
-            return sessions
-                .get(id)
-                .filter(|s| s.last_seen.elapsed() < SESSION_TTL)
-                .map(|s| s.tx.clone())
-                .ok_or_else(|| {
-                    anyhow!("Unknown session `{id}`. Live sessions: {}", describe(&live))
-                });
-        }
-        match live.as_slice() {
-            [] => bail!(
-                "No Roblox client connected. Open Roblox with MacSploit and join a game; \
-                 if the bridge was just installed, rejoin once so autoexec runs it."
-            ),
-            [only] => Ok(sessions[&only.session].tx.clone()),
-            _ => bail!(
-                "Multiple clients connected; pass `session`. Live sessions: {}",
-                describe(&live)
-            ),
-        }
+    fn connected(&self) -> bool {
+        self.last_poll
+            .lock()
+            .unwrap()
+            .is_some_and(|t| t.elapsed() < BRIDGE_TTL)
     }
-}
-
-fn describe(sessions: &[SessionInfo]) -> String {
-    if sessions.is_empty() {
-        return "none".into();
-    }
-    sessions
-        .iter()
-        .map(|s| format!("{} ({}, place {})", s.session, s.user, s.place_id))
-        .collect::<Vec<_>>()
-        .join(", ")
 }

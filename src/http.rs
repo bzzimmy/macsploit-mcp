@@ -7,7 +7,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
 
-use crate::broker::{Broker, JobResult, SessionInfo};
+use crate::broker::{Broker, JobResult};
 
 pub async fn serve(broker: Arc<Broker>, addr: SocketAddr) -> anyhow::Result<()> {
     let app = Router::new()
@@ -19,14 +19,14 @@ pub async fn serve(broker: Arc<Broker>, addr: SocketAddr) -> anyhow::Result<()> 
     Ok(())
 }
 
-async fn poll(State(broker): State<Arc<Broker>>, Json(info): Json<SessionInfo>) -> Response {
-    match broker.poll(info).await {
+async fn poll(State(broker): State<Arc<Broker>>) -> Response {
+    match broker.poll().await {
         Some(job) => Json(job).into_response(),
         None => StatusCode::NO_CONTENT.into_response(),
     }
 }
 
 async fn result(State(broker): State<Arc<Broker>>, Json(result): Json<JobResult>) -> StatusCode {
-    broker.complete(result).await;
+    broker.complete(result);
     StatusCode::NO_CONTENT
 }
