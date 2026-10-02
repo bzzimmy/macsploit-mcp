@@ -5,9 +5,9 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use rmcp::handler::server::common::schema_for_output;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::CallToolResult;
+use rmcp::model::{CallToolResult, RequestMetaObject};
 use rmcp::schemars::{self, JsonSchema};
-use rmcp::{ErrorData, tool, tool_router};
+use rmcp::{ErrorData, Peer, RoleServer, tool, tool_router};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -71,8 +71,10 @@ impl Server {
     async fn dump_scripts(
         &self,
         Parameters(p): Parameters<DumpParams>,
+        meta: RequestMetaObject,
+        peer: Peer<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let output = dump(self, p.filter.as_deref())
+        let output = super::with_progress(&meta, &peer, dump(self, p.filter.as_deref()))
             .await
             .unwrap_or_else(|err| DumpOutput {
                 error: Some(format!("{err:#}")),

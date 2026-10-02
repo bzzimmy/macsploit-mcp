@@ -25,5 +25,7 @@ rustc-ice-*.txt
 
 # macOS
 .DS_Store
+
 # Project specific
-SPEC.md
+sessions/
+BUGS.md

@@ -38,6 +38,8 @@ Files are written to `.macsploit/` in the working directory (with its own `.giti
    ```
 3. Start your client, then open Roblox with MacSploit and join a game. The server installs the bridge on startup; if you were already in a game, rejoin once so autoexec runs it.
 
+Long `execute` calls send a progress notification every 20s, which keeps clients like Pi waiting past their 60s default. Clients that don't reset their timeout on progress need a longer one, e.g. Codex `tool_timeout_sec = 620`.
+
 Only one game session is supported at a time. Several MCP clients can run at once; they share the first server's connection.
 
 ## Credits

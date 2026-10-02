@@ -5,9 +5,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 use rmcp::handler::server::common::schema_for_output;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::CallToolResult;
+use rmcp::model::{CallToolResult, RequestMetaObject};
 use rmcp::schemars::{self, JsonSchema};
-use rmcp::{ErrorData, tool, tool_router};
+use rmcp::{ErrorData, Peer, RoleServer, tool, tool_router};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -56,17 +56,22 @@ impl Server {
                        session). To capture outgoing remotes, hook both `__namecall` \
                        (`hookmetamethod`) and `FireServer`/`InvokeServer` (`hookfunction`), since \
                        direct calls bypass `__namecall`; skip your own calls with `checkcaller()` and \
-                       keep the log in `getgenv()`.",
+                       keep the log in `getgenv()`. Only `print`/`warn` called directly by your code \
+                       are captured; separately compiled code (`loadstring`, `run_on_actor`) prints \
+                       only to the console, so return actor data via `create_comm_channel` or \
+                       attributes.",
         output_schema = schema_for_output::<ExecuteOutput>(),
         annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true)
     )]
     async fn execute(
         &self,
         Parameters(p): Parameters<ExecuteParams>,
+        meta: RequestMetaObject,
+        peer: Peer<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let wait = Duration::from_secs(p.timeout_secs.unwrap_or(30).clamp(1, 600));
         let result = match load(p.code, p.file.as_deref()) {
-            Ok(code) => self.bridge.execute(code, wait).await,
+            Ok(code) => super::with_progress(&meta, &peer, self.bridge.execute(code, wait)).await,
             Err(err) => Err(err),
         };
         let output = match result {
