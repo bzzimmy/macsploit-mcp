@@ -1,6 +1,6 @@
--- Collects client script bytecode for dump_scripts. Keeps the instances for the decompile fallback.
+-- Collects client script bytecode for dump_scripts.
 local internal = {CorePackages = true, CoreGui = true, ["Script Context"] = true}
-local seen, scripts, list = {}, {}, {}
+local seen, list = {}, {}
 
 local function segments(instance)
 	local names = {}
@@ -22,7 +22,6 @@ local function add(instance)
 	if internal[path[1]] then return end
 	local ok, bytecode = pcall(getscriptbytecode, instance)
 	if not ok or not bytecode or #bytecode == 0 then return end
-	table.insert(scripts, instance)
 	table.insert(list, {path = path, class = instance.ClassName, bytecode = base64encode(bytecode)})
 end
 
@@ -32,5 +31,4 @@ for _, instance in getnilinstances() do
 	for _, child in instance:GetDescendants() do add(child) end
 end
 
-getgenv().__macsploit_mcp_scripts = scripts
 return {placeId = game.PlaceId, scripts = list}

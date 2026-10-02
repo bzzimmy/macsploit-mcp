@@ -39,6 +39,14 @@ impl Decompiler {
         Ok(source)
     }
 
+    /// Starts the decompiler if needed, so a broken install fails before any work is done.
+    pub async fn start(&self) -> Result<()> {
+        self.url()
+            .await
+            .map(drop)
+            .context("could not start the Opiumware decompiler")
+    }
+
     pub async fn stop(&self) {
         if let Some((mut child, _)) = self.process.lock().await.take() {
             let _ = child.kill().await;

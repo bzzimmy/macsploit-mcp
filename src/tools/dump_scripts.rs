@@ -10,14 +10,12 @@ use rmcp::schemars::{self, JsonSchema};
 use rmcp::{ErrorData, tool, tool_router};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::broker::JobResult;
 use crate::mcp::Server;
 use crate::workspace;
 
 const COLLECT: &str = include_str!("../../lua/collect_scripts.lua");
-const FALLBACK: &str = include_str!("../../lua/decompile_scripts.lua");
 const LISTED_FAILURES: usize = 20;
 
 #[derive(Deserialize, JsonSchema)]
@@ -82,14 +80,14 @@ impl Server {
 }
 
 async fn dump(server: &Server, filter: Option<&str>) -> Result<DumpOutput> {
+    server.decompiler.start().await?;
     let wait = Duration::from_secs(60);
     let collected: Collected = first_return(server.bridge.execute(COLLECT.into(), wait).await?)?;
     let filter = filter.map(str::to_lowercase);
-    let scripts: Vec<(usize, Script)> = collected
+    let scripts: Vec<Script> = collected
         .scripts
         .into_iter()
-        .enumerate()
-        .filter(|(_, s)| {
+        .filter(|s| {
             filter
                 .as_ref()
                 .is_none_or(|f| s.path.join(".").to_lowercase().contains(f))
@@ -98,7 +96,7 @@ async fn dump(server: &Server, filter: Option<&str>) -> Result<DumpOutput> {
 
     let mut sources = HashMap::new();
     let mut errors = HashMap::new();
-    for (_, script) in &scripts {
+    for script in &scripts {
         let bytecode = &script.bytecode;
         if sources.contains_key(bytecode) || errors.contains_key(bytecode) {
             continue;
@@ -107,31 +105,6 @@ async fn dump(server: &Server, filter: Option<&str>) -> Result<DumpOutput> {
             Ok(source) => sources.insert(bytecode.clone(), source),
             Err(err) => errors.insert(bytecode.clone(), format!("{err:#}")),
         };
-    }
-
-    if !errors.is_empty() {
-        let mut ids = HashMap::new();
-        for (i, script) in &scripts {
-            if errors.contains_key(&script.bytecode) {
-                ids.entry(i + 1).or_insert(&script.bytecode);
-            }
-        }
-        let list: Vec<String> = ids.keys().map(ToString::to_string).collect();
-        let code = format!("local ids = {{{}}}\n{FALLBACK}", list.join(","));
-        let recovered: Value = first_return(server.bridge.execute(code, wait).await?)?;
-        for (id, bytecode) in ids {
-            match recovered.get(id.to_string()).and_then(Value::as_str) {
-                Some(source) => {
-                    errors.remove(bytecode);
-                    sources.insert(bytecode.clone(), source.to_owned());
-                }
-                None => {
-                    if let Some(err) = errors.get_mut(bytecode) {
-                        err.push_str("; MacSploit fallback failed or ran out of time");
-                    }
-                }
-            }
-        }
     }
 
     let root = workspace::dir(&collected.place_id.to_string())?;
@@ -145,7 +118,7 @@ async fn dump(server: &Server, filter: Option<&str>) -> Result<DumpOutput> {
         dir: root.display().to_string(),
         ..DumpOutput::default()
     };
-    for (_, script) in &scripts {
+    for script in &scripts {
         let full_name = script.path.join(".");
         let Some(source) = sources.get(&script.bytecode) else {
             output.failed += 1;
