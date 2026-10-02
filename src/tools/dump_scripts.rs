@@ -35,6 +35,9 @@ pub struct DumpOutput {
     failures: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    /// Set when the client was kicked or disconnected: the game is dead until you rejoin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    disconnected: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -82,7 +85,9 @@ impl Server {
 async fn dump(server: &Server, filter: Option<&str>) -> Result<DumpOutput> {
     server.decompiler.start().await?;
     let wait = Duration::from_secs(60);
-    let collected: Collected = first_return(server.bridge.execute(COLLECT.into(), wait).await?)?;
+    let job = server.bridge.execute(COLLECT.into(), wait).await?;
+    let disconnected = job.disconnected.clone();
+    let collected: Collected = first_return(job)?;
     let filter = filter.map(str::to_lowercase);
     let scripts: Vec<Script> = collected
         .scripts
@@ -116,6 +121,7 @@ async fn dump(server: &Server, filter: Option<&str>) -> Result<DumpOutput> {
     let mut output = DumpOutput {
         ok: true,
         dir: root.display().to_string(),
+        disconnected,
         ..DumpOutput::default()
     };
     for script in &scripts {

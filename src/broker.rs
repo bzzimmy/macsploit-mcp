@@ -29,6 +29,9 @@ pub struct JobResult {
     #[serde(default)]
     pub output: Vec<String>,
     pub error: Option<String>,
+    /// Kick or disconnect reason, when the game is dead.
+    #[serde(default)]
+    pub disconnected: Option<String>,
 }
 
 pub struct Broker {
@@ -133,6 +136,7 @@ mod tests {
             returns: vec![format!("{:?}", job.code)],
             output: Vec::new(),
             error: None,
+            disconnected: None,
         }
     }
 

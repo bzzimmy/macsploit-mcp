@@ -39,6 +39,9 @@ pub struct ExecuteOutput {
     /// File with the complete result, set when it was too large to return inline.
     #[serde(skip_serializing_if = "Option::is_none")]
     full_output: Option<String>,
+    /// Set when the client was kicked or disconnected: the game is dead until you rejoin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    disconnected: Option<String>,
 }
 
 #[tool_router(router = execute_router, vis = "pub(crate)")]
@@ -48,7 +51,12 @@ impl Server {
                        Pass `code` for quick one-off checks, or `file` for scripts you'll iterate on: \
                        edit the file and rerun instead of resending code. Returns print/warn output \
                        and return values. Filter in Luau and return only what you need; results over \
-                       ~3K tokens are cut and saved to `full_output`.",
+                       ~3K tokens are cut and saved to `full_output`. Rejoin with `TeleportService` \
+                       (the call returns before the teleport; the next call waits for the new \
+                       session). To capture outgoing remotes, hook both `__namecall` \
+                       (`hookmetamethod`) and `FireServer`/`InvokeServer` (`hookfunction`), since \
+                       direct calls bypass `__namecall`; skip your own calls with `checkcaller()` and \
+                       keep the log in `getgenv()`.",
         output_schema = schema_for_output::<ExecuteOutput>(),
         annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true)
     )]
@@ -107,6 +115,7 @@ impl From<JobResult> for ExecuteOutput {
             output: result.output,
             error: result.error,
             full_output: None,
+            disconnected: result.disconnected,
         }
     }
 }
@@ -119,6 +128,7 @@ impl ExecuteOutput {
             output: Vec::new(),
             error: Some(error),
             full_output: None,
+            disconnected: None,
         }
     }
 
@@ -201,6 +211,7 @@ mod tests {
             returns: returns.iter().map(ToString::to_string).collect(),
             output,
             error: None,
+            disconnected: None,
         }
     }
 

@@ -8,6 +8,7 @@ local Players = game:GetService("Players")
 while not Players.LocalPlayer do Players:GetPropertyChangedSignal("LocalPlayer"):Wait() end
 
 local HttpService = game:GetService("HttpService")
+local GuiService = game:GetService("GuiService")
 local BASE = "http://127.0.0.1:8766"
 local HEADERS = {["Content-Type"] = "application/json"}
 local baseEnv = getfenv(1)
@@ -44,6 +45,15 @@ local function encode(value)
 	return json == "" and "null" or json
 end
 
+-- Scripts keep running after a kick, so report it: the game is dead until a rejoin.
+local function disconnected()
+	local ok, reason = pcall(function()
+		if GuiService:GetErrorType().Name ~= "DisconnectErrors" then return nil end
+		return GuiService:GetErrorCode().Name .. ": " .. GuiService:GetErrorMessage()
+	end)
+	return ok and reason or nil
+end
+
 local function run(job)
 	local output = {}
 	local function capture(kind)
@@ -69,6 +79,7 @@ local function run(job)
 	else
 		result.error = err
 	end
+	result.disconnected = disconnected()
 	pcall(post, "/result", result)
 end
 
