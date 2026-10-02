@@ -16,12 +16,32 @@ local function post(path, body)
 	return request({Url = BASE .. path, Method = "POST", Headers = HEADERS, Body = HttpService:JSONEncode(body)})
 end
 
-local function show(value)
-	if type(value) == "table" then
-		local ok, json = pcall(HttpService.JSONEncode, HttpService, value)
-		if ok then return json end
+-- Converts a value into something JSONEncode accepts: Instances become paths, other userdata strings.
+local function plain(value, seen)
+	local kind = typeof(value)
+	if kind == "Instance" then return value:GetFullName() end
+	if kind == "number" then return (value == value and math.abs(value) ~= math.huge) and value or tostring(value) end
+	if kind == "string" or kind == "boolean" or kind == "nil" then return value end
+	if kind ~= "table" then return tostring(value) end
+	if seen[value] then return "<cycle>" end
+	seen[value] = true
+	local count = 0
+	for _ in pairs(value) do count += 1 end
+	local isArray = count == #value
+	local out = {}
+	for k, v in pairs(value) do
+		out[isArray and k or tostring(k)] = plain(v, seen)
 	end
-	return tostring(value)
+	seen[value] = nil
+	return out
+end
+
+-- JSON text for one return value; wrapping in an array lets nil encode as null.
+local function encode(value)
+	local ok, json = pcall(HttpService.JSONEncode, HttpService, {plain(value, {})})
+	if not ok then json = HttpService:JSONEncode({tostring(value)}) end
+	json = json:sub(2, -2)
+	return json == "" and "null" or json
 end
 
 local function run(job)
@@ -41,9 +61,10 @@ local function run(job)
 		local packed = table.pack(pcall(fn))
 		result.ok = packed[1]
 		if packed[1] then
-			for i = 2, packed.n do table.insert(result.returns, show(packed[i])) end
+			for i = 2, packed.n do table.insert(result.returns, encode(packed[i])) end
 		else
-			result.error = tostring(packed[2])
+			local err = packed[2]
+			result.error = type(err) == "string" and err or encode(err)
 		end
 	else
 		result.error = err
@@ -62,7 +83,7 @@ task.spawn(function()
 			backoff = 1
 		else
 			task.wait(backoff)
-			backoff = math.min(backoff * 2, 10)
+			backoff = math.min(backoff * 2, 5)
 		end
 	end
 end)
