@@ -31,4 +31,4 @@ for _, instance in getnilinstances() do
 	for _, child in instance:GetDescendants() do add(child) end
 end
 
-return {placeId = game.PlaceId, scripts = list}
+return {placeId = game.PlaceId, player = game:GetService("Players").LocalPlayer.Name, scripts = list}

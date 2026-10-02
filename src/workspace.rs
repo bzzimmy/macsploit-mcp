@@ -12,13 +12,17 @@ static ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
     }
 });
 
-/// Path of `subdir`, creating it and the root `.gitignore`.
+/// Path of `subdir`, creating it and the root ignore files.
 pub fn dir(subdir: &str) -> Result<PathBuf> {
     let dir = ROOT.join(subdir);
     std::fs::create_dir_all(&dir)?;
-    let ignore = ROOT.join(".gitignore");
-    if !ignore.exists() {
-        std::fs::write(ignore, "*\n")?;
+    // Hidden from git, but `.ignore` takes precedence for ripgrep/fd, so agents' search tools
+    // still see it.
+    for (name, contents) in [(".gitignore", "*\n"), (".ignore", "!*\n")] {
+        let path = ROOT.join(name);
+        if !path.exists() {
+            std::fs::write(path, contents)?;
+        }
     }
     Ok(dir)
 }

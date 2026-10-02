@@ -11,12 +11,17 @@ use rmcp::{ErrorData, Peer, RoleServer, tool, tool_router};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use tokio::time::Instant;
+
 use crate::broker::JobResult;
 use crate::mcp::Server;
 use crate::workspace;
 
 /// About 3K tokens.
 const INLINE_CHARS: usize = 12_000;
+/// Time for a write issued in parallel with this call to land before the file is read.
+const FILE_SETTLE: Duration = Duration::from_millis(300);
+const FILE_WAIT: Duration = Duration::from_secs(2);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ExecuteParams {
@@ -70,7 +75,7 @@ impl Server {
         peer: Peer<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let wait = Duration::from_secs(p.timeout_secs.unwrap_or(30).clamp(1, 600));
-        let result = match load(p.code, p.file.as_deref()) {
+        let result = match load(p.code, p.file.as_deref()).await {
             Ok(code) => super::with_progress(&meta, &peer, self.bridge.execute(code, wait)).await,
             Err(err) => Err(err),
         };
@@ -83,19 +88,29 @@ impl Server {
 }
 
 /// The Luau to run: inline `code` or the contents of `file`, exactly one of them.
-fn load(code: Option<String>, file: Option<&Path>) -> Result<String> {
+async fn load(code: Option<String>, file: Option<&Path>) -> Result<String> {
     match (code, file) {
         (Some(code), None) => Ok(code),
-        (None, Some(file)) => {
-            let path = std::path::absolute(file)?;
-            let source = std::fs::read_to_string(&path)
-                .with_context(|| format!("Could not read {}", path.display()))?;
+        (None, Some(file)) => read_file(&std::path::absolute(file)?).await,
+        _ => bail!("Pass exactly one of `code` or `file`."),
+    }
+}
+
+/// Harnesses may write a file and run it in parallel, so let the write land: wait briefly,
+/// then retry while the file is missing or empty.
+async fn read_file(path: &Path) -> Result<String> {
+    tokio::time::sleep(FILE_SETTLE).await;
+    let deadline = Instant::now() + FILE_WAIT;
+    loop {
+        let read = std::fs::read_to_string(path);
+        if read.as_ref().is_ok_and(|s| !s.trim().is_empty()) || Instant::now() >= deadline {
+            let source = read.with_context(|| format!("Could not read {}", path.display()))?;
             if source.trim().is_empty() {
                 bail!("{} is empty.", path.display());
             }
-            Ok(source)
+            return Ok(source);
         }
-        _ => bail!("Pass exactly one of `code` or `file`."),
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
@@ -220,8 +235,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn loads_code_or_file() {
+    #[tokio::test(start_paused = true)]
+    async fn loads_code_or_file() {
         let dir = std::env::temp_dir().join(format!("macsploit-mcp-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("script.luau");
@@ -229,15 +244,38 @@ mod tests {
         std::fs::write(&script, "return 1").unwrap();
         std::fs::write(&empty, " \n").unwrap();
 
-        assert_eq!(load(Some("return 2".into()), None).unwrap(), "return 2");
-        assert_eq!(load(None, Some(&script)).unwrap(), "return 1");
-        let error = |code: Option<&str>, file: Option<&Path>| {
-            format!("{:#}", load(code.map(Into::into), file).unwrap_err())
+        assert_eq!(
+            load(Some("return 2".into()), None).await.unwrap(),
+            "return 2"
+        );
+        assert_eq!(load(None, Some(&script)).await.unwrap(), "return 1");
+        let error = async |code: Option<&str>, file: Option<&Path>| {
+            format!("{:#}", load(code.map(Into::into), file).await.unwrap_err())
         };
-        assert!(error(None, None).starts_with("Pass exactly one"));
-        assert!(error(Some("x"), Some(&script)).starts_with("Pass exactly one"));
-        assert!(error(None, Some(&dir.join("missing.luau"))).starts_with("Could not read"));
-        assert!(error(None, Some(&empty)).ends_with("is empty."));
+        assert!(error(None, None).await.starts_with("Pass exactly one"));
+        assert!(
+            error(Some("x"), Some(&script))
+                .await
+                .starts_with("Pass exactly one")
+        );
+        assert!(
+            error(None, Some(&dir.join("missing.luau")))
+                .await
+                .starts_with("Could not read")
+        );
+        assert!(error(None, Some(&empty)).await.ends_with("is empty."));
+
+        // A write that lands after the call starts is still picked up.
+        let late = dir.join("late.luau");
+        let writer = {
+            let late = late.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                std::fs::write(late, "return 3").unwrap();
+            })
+        };
+        assert_eq!(load(None, Some(&late)).await.unwrap(), "return 3");
+        writer.await.unwrap();
         std::fs::remove_dir_all(dir).unwrap();
     }
 

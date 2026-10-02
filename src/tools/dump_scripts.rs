@@ -44,6 +44,7 @@ pub struct DumpOutput {
 #[serde(rename_all = "camelCase")]
 struct Collected {
     place_id: u64,
+    player: String,
     scripts: Vec<Script>,
 }
 
@@ -91,27 +92,22 @@ async fn dump(server: &Server, filter: Option<&str>) -> Result<DumpOutput> {
     let disconnected = job.disconnected.clone();
     let collected: Collected = first_return(job)?;
     let filter = filter.map(str::to_lowercase);
-    let scripts: Vec<Script> = collected
-        .scripts
-        .into_iter()
-        .filter(|s| {
-            filter
-                .as_ref()
-                .is_none_or(|f| s.path.join(".").to_lowercase().contains(f))
-        })
-        .collect();
 
-    let mut sources = HashMap::new();
-    let mut errors = HashMap::new();
-    for script in &scripts {
-        let bytecode = &script.bytecode;
-        if sources.contains_key(bytecode) || errors.contains_key(bytecode) {
+    // Copies of the same script (templates, per-player clones) share bytecode: write each once.
+    let mut groups: Vec<Vec<Script>> = Vec::new();
+    let mut by_bytecode = HashMap::new();
+    for script in collected.scripts {
+        let full_name = script.path.join(".").to_lowercase();
+        if filter.as_ref().is_some_and(|f| !full_name.contains(f)) {
             continue;
         }
-        match server.decompiler.decompile(bytecode).await {
-            Ok(source) => sources.insert(bytecode.clone(), source),
-            Err(err) => errors.insert(bytecode.clone(), format!("{err:#}")),
-        };
+        let i = *by_bytecode
+            .entry(script.bytecode.clone())
+            .or_insert_with(|| {
+                groups.push(Vec::new());
+                groups.len() - 1
+            });
+        groups[i].push(script);
     }
 
     let root = workspace::dir(&collected.place_id.to_string())?;
@@ -126,29 +122,48 @@ async fn dump(server: &Server, filter: Option<&str>) -> Result<DumpOutput> {
         disconnected,
         ..DumpOutput::default()
     };
-    for script in &scripts {
-        let full_name = script.path.join(".");
-        let Some(source) = sources.get(&script.bytecode) else {
-            output.failed += 1;
-            if output.failures.len() < LISTED_FAILURES {
-                output
-                    .failures
-                    .push(format!("{full_name}: {}", errors[&script.bytecode]));
+    for mut group in groups {
+        group.sort_by_key(|s| (rank(&s.path, &collected.player), s.path.len()));
+        let main = &group[0];
+        let full_name = main.path.join(".");
+        let source = match server.decompiler.decompile(&main.bytecode).await {
+            Ok(source) => source,
+            Err(err) => {
+                output.failed += 1;
+                if output.failures.len() < LISTED_FAILURES {
+                    output.failures.push(format!("{full_name}: {err:#}"));
+                }
+                continue;
             }
-            continue;
         };
-        let path = file_path(&root, &script.path, &mut used);
+        let also = if group.len() > 1 {
+            let others: Vec<String> = group[1..].iter().map(|s| s.path.join(".")).collect();
+            format!("-- Also at: {}\n", others.join(", "))
+        } else {
+            String::new()
+        };
+        let header = format!("-- {full_name} ({})\n{also}", main.class);
+        let path = file_path(&root, &main.path, &mut used);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(
-            &path,
-            format!("-- {full_name} ({})\n\n{source}", script.class),
-        )
-        .with_context(|| format!("writing {}", path.display()))?;
+        std::fs::write(&path, format!("{header}\n{source}"))
+            .with_context(|| format!("writing {}", path.display()))?;
         output.written += 1;
     }
     Ok(output)
+}
+
+/// Which copy to keep: the live one under the local player first, `Starter*` templates last.
+fn rank(path: &[String], player: &str) -> u8 {
+    let root = path.first().map_or("", String::as_str);
+    let owner = path.get(1).map_or("", String::as_str);
+    match root {
+        "Players" | "Workspace" if owner == player => 0,
+        "Players" | "Workspace" => 2,
+        _ if root.starts_with("Starter") => 3,
+        _ => 1,
+    }
 }
 
 fn first_return<T: DeserializeOwned>(result: JobResult) -> Result<T> {
@@ -184,7 +199,13 @@ fn file_path(root: &Path, segments: &[String], used: &mut HashSet<String>) -> Pa
 fn sanitize(name: &str) -> String {
     let clean: String = name
         .chars()
-        .map(|c| if c == '/' || c.is_control() { '_' } else { c })
+        .map(|c| {
+            if c == '/' || c == ' ' || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
         .take(100)
         .collect();
     if clean.chars().all(|c| c == '.') {
@@ -226,6 +247,27 @@ mod tests {
         assert_eq!(sanitize("a/b"), "a_b");
         assert_eq!(sanitize(".."), "_");
         assert_eq!(sanitize(""), "_");
-        assert_eq!(sanitize("Drooling Zombie"), "Drooling Zombie");
+        assert_eq!(sanitize("Drooling Zombie"), "Drooling_Zombie");
+    }
+
+    #[test]
+    fn keeps_the_live_copy() {
+        let mut copies = [
+            "StarterGui.Main",
+            "Workspace.Other.Main",
+            "Players.Me.PlayerGui.Main",
+            "ReplicatedStorage.Main",
+        ]
+        .map(segments);
+        copies.sort_by_key(|p| rank(p, "Me"));
+        assert_eq!(
+            copies.map(|p| p.join(".")),
+            [
+                "Players.Me.PlayerGui.Main",
+                "ReplicatedStorage.Main",
+                "Workspace.Other.Main",
+                "StarterGui.Main",
+            ]
+        );
     }
 }
