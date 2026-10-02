@@ -1,31 +1,43 @@
 # macsploit-mcp
 
-An MCP (Model Context Protocol) server for MacSploit that allows AI agents to interact with a live Roblox client without blocking the MacSploit application itself.
+An MCP server that lets AI agents run Luau in a live Roblox client through MacSploit, while the MacSploit app stays open and usable.
 
-## Overview
+Unofficial; not affiliated with MacSploit or Roblox.
 
-MacSploit's local executor accepts a single TCP connection on port `5553`. If an external tool binds to this port, the MacSploit app can no longer use it. `macsploit-mcp` solves this by automatically installing an auto-execution script (`MCPBridge.lua`) into MacSploit. This bridge long-polls a local HTTP server (`127.0.0.1:8766`) for jobs, allowing the MCP server to execute Luau code without touching port `5553`.
+## How it works
 
-## Features
+MacSploit's injected library accepts only one client on port `5553`, and the MacSploit app holds that connection, so other tools can't use it. Instead, `macsploit-mcp` installs `MCPBridge.lua` into `~/Documents/Macsploit Automatic Execution/`. MacSploit runs it on every game join, and it long-polls the server on `127.0.0.1:8766` for jobs. Port `5553` is never touched.
 
-- **Execute Luau:** Run arbitrary Luau scripts inside the live Roblox client with the full MacSploit (sUNC) API. Return values and output are captured and returned to the agent.
-- **Decompile Scripts:** Automatically dump and decompile client scripts (LocalScripts, ModuleScripts) from the game instance tree into a local directory using a vendored Opiumware decompiler.
-- **Large Output Handling:** Inline execution results are capped at around 3,000 tokens. Larger results are automatically truncated and saved to a local file for the agent to inspect.
+## Tools
 
-## Provided Tools
+- **`execute(code, timeout_secs?)`**: runs Luau with the full MacSploit ([sUNC](https://docs.sunc.io)) API and returns `print`/`warn` output and return values as JSON. Waits 30s by default (max 600). Results over ~3K tokens are trimmed, with the full result saved to a file.
+- **`dump_scripts(filter?)`**: decompiles the game's client scripts into `.luau` files mirroring the instance tree, for the agent to read and search. `filter` limits it to paths containing the given text.
 
-- `execute(code, timeout_secs)`: Runs Luau code inside the connected Roblox client. Returns output and return values, saving large outputs to a file automatically.
-- `dump_scripts(filter)`: Decompiles the game's client scripts into a local directory structure mirroring the instance tree (`.luau` files), making them easy to read and search.
+Files are written to `.macsploit/` in the working directory (with its own `.gitignore`), or to `$TMPDIR/macsploit-mcp/` when there is no project directory.
 
-## Installation & Usage
+## Setup
 
-1. Build the project:
+1. Build:
    ```sh
    cargo build --release
    ```
-2. Run the server:
+2. Add `target/release/macsploit-mcp` to your MCP client. For Claude Code:
    ```sh
-   ./target/release/macsploit-mcp
+   claude mcp add macsploit -- /absolute/path/to/macsploit-mcp
    ```
-3. Open Roblox with MacSploit and join a game. The server will automatically install the necessary bridge script into `~/Documents/Macsploit Automatic Execution/`.
-4. The MCP server connects via standard IO (`stdio`), exposing the tools to any compatible MCP client.
+   For Codex, in `~/.codex/config.toml`:
+   ```toml
+   [mcp_servers.macsploit]
+   command = "/absolute/path/to/macsploit-mcp"
+   ```
+3. Start your client, then open Roblox with MacSploit and join a game. The server installs the bridge on startup; if you were already in a game, rejoin once so autoexec runs it.
+
+Only one game session is supported at a time. Several MCP clients can run at once; they share the first server's connection.
+
+## Credits
+
+Decompilation uses [Opiumware](https://discord.gg/opiumware)'s decompiler, vendored in `vendor/` and embedded in the binary.
+
+## License
+
+MIT
