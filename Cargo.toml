@@ -4,6 +4,16 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
+[lints.rust]
+unsafe_code = "forbid"
+future_incompatible = { level = "warn", priority = -1 }
+nonstandard_style = { level = "warn", priority = -1 }
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
 [dependencies]
 anyhow = "1.0.104"
 axum = "0.8.9"

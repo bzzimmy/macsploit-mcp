@@ -19,7 +19,7 @@ pub struct Server {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ExecuteParams {
-    /// Luau source. Runs in MacSploit's executor environment; `return` values are sent back.
+    /// Luau source. Runs in `MacSploit`'s executor environment; `return` values are sent back.
     code: String,
     /// Seconds to wait for the script to finish. Default 30.
     timeout_secs: Option<u64>,
@@ -55,7 +55,7 @@ impl Server {
             Ok(result) => ExecuteOutput {
                 ok: result.ok,
                 returns: result.returns,
-                output: truncate(result.output),
+                output: truncate(&result.output),
                 error: result.error,
             },
             Err(err) => ExecuteOutput {
@@ -75,16 +75,20 @@ impl Server {
     }
 }
 
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "`tool_handler` generates async trait methods that don't await"
+)]
 #[tool_handler(
     name = "macsploit",
     instructions = "Execute Luau inside a live Roblox client through MacSploit."
 )]
 impl ServerHandler for Server {}
 
-fn truncate(lines: Vec<String>) -> Vec<String> {
+fn truncate(lines: &[String]) -> Vec<String> {
     let mut total = 0;
     let mut kept = Vec::new();
-    for line in &lines {
+    for line in lines {
         total += line.len();
         if total > MAX_OUTPUT_CHARS {
             kept.push(format!(

@@ -82,16 +82,14 @@ impl Broker {
         let (done_tx, done_rx) = oneshot::channel();
         self.pending.lock().unwrap().insert(id, done_tx);
         let _ = self.tx.send(Job { id, code });
-        match timeout(wait, done_rx).await {
-            Ok(Ok(result)) => Ok(result),
-            _ => {
-                self.pending.lock().unwrap().remove(&id);
-                bail!(
-                    "No result after {}s. The script may still be running in game.",
-                    wait.as_secs()
-                )
-            }
+        if let Ok(Ok(result)) = timeout(wait, done_rx).await {
+            return Ok(result);
         }
+        self.pending.lock().unwrap().remove(&id);
+        bail!(
+            "No result after {}s. The script may still be running in game.",
+            wait.as_secs()
+        )
     }
 
     fn connected(&self) -> bool {
