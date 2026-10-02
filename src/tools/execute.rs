@@ -1,8 +1,8 @@
 use std::fmt::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use rmcp::handler::server::common::schema_for_output;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
@@ -20,8 +20,10 @@ const INLINE_CHARS: usize = 12_000;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ExecuteParams {
-    /// Luau source. `return` values are sent back.
-    code: String,
+    /// Luau source for quick one-off checks. `return` values are sent back.
+    code: Option<String>,
+    /// Path to a `.lua`/`.luau` file to run instead, relative to the working directory.
+    file: Option<PathBuf>,
     /// Seconds to wait for the script to finish. Default 30, max 600.
     timeout_secs: Option<u64>,
 }
@@ -43,8 +45,10 @@ pub struct ExecuteOutput {
 impl Server {
     #[tool(
         description = "Run Luau in the connected Roblox client with the full MacSploit (sUNC) API. \
-                       Returns print/warn output and return values. Filter in Luau and return only \
-                       what you need; results over ~3K tokens are cut and saved to `full_output`.",
+                       Pass `code` for quick one-off checks, or `file` for scripts you'll iterate on: \
+                       edit the file and rerun instead of resending code. Returns print/warn output \
+                       and return values. Filter in Luau and return only what you need; results over \
+                       ~3K tokens are cut and saved to `full_output`.",
         output_schema = schema_for_output::<ExecuteOutput>(),
         annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true)
     )]
@@ -53,11 +57,32 @@ impl Server {
         Parameters(p): Parameters<ExecuteParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let wait = Duration::from_secs(p.timeout_secs.unwrap_or(30).clamp(1, 600));
-        let output = match self.bridge.execute(p.code, wait).await {
+        let result = match load(p.code, p.file.as_deref()) {
+            Ok(code) => self.bridge.execute(code, wait).await,
+            Err(err) => Err(err),
+        };
+        let output = match result {
             Ok(result) => ExecuteOutput::from(result).fit(save),
-            Err(err) => ExecuteOutput::failed(err.to_string()),
+            Err(err) => ExecuteOutput::failed(format!("{err:#}")),
         };
         super::structured(&output, output.ok)
+    }
+}
+
+/// The Luau to run: inline `code` or the contents of `file`, exactly one of them.
+fn load(code: Option<String>, file: Option<&Path>) -> Result<String> {
+    match (code, file) {
+        (Some(code), None) => Ok(code),
+        (None, Some(file)) => {
+            let path = std::path::absolute(file)?;
+            let source = std::fs::read_to_string(&path)
+                .with_context(|| format!("Could not read {}", path.display()))?;
+            if source.trim().is_empty() {
+                bail!("{} is empty.", path.display());
+            }
+            Ok(source)
+        }
+        _ => bail!("Pass exactly one of `code` or `file`."),
     }
 }
 
@@ -177,6 +202,27 @@ mod tests {
             output,
             error: None,
         }
+    }
+
+    #[test]
+    fn loads_code_or_file() {
+        let dir = std::env::temp_dir().join(format!("macsploit-mcp-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("script.luau");
+        let empty = dir.join("empty.luau");
+        std::fs::write(&script, "return 1").unwrap();
+        std::fs::write(&empty, " \n").unwrap();
+
+        assert_eq!(load(Some("return 2".into()), None).unwrap(), "return 2");
+        assert_eq!(load(None, Some(&script)).unwrap(), "return 1");
+        let error = |code: Option<&str>, file: Option<&Path>| {
+            format!("{:#}", load(code.map(Into::into), file).unwrap_err())
+        };
+        assert!(error(None, None).starts_with("Pass exactly one"));
+        assert!(error(Some("x"), Some(&script)).starts_with("Pass exactly one"));
+        assert!(error(None, Some(&dir.join("missing.luau"))).starts_with("Could not read"));
+        assert!(error(None, Some(&empty)).ends_with("is empty."));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
