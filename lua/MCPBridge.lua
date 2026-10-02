@@ -56,14 +56,16 @@ end
 
 local function run(job)
 	local output = {}
-	local function capture(kind)
+	-- Capture print/warn for the result while still writing to the Roblox console.
+	local function capture(kind, original)
 		return function(...)
+			original(...)
 			local args = table.pack(...)
 			for i = 1, args.n do args[i] = tostring(args[i]) end
 			table.insert(output, kind .. ": " .. table.concat(args, " ", 1, args.n))
 		end
 	end
-	local env = setmetatable({print = capture("print"), warn = capture("warn")}, {__index = baseEnv, __newindex = baseEnv})
+	local env = setmetatable({print = capture("print", print), warn = capture("warn", warn)}, {__index = baseEnv, __newindex = baseEnv})
 	local result = {id = job.id, ok = false, output = output, returns = {}}
 	local fn, err = loadstring(job.code)
 	if fn then

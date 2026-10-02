@@ -10,8 +10,10 @@ MacSploit's injected library accepts only one client on port `5553`, and the Mac
 
 ## Tools
 
-- **`execute(code, timeout_secs?)`**: runs Luau with the full MacSploit ([sUNC](https://docs.sunc.io)) API and returns `print`/`warn` output and return values as JSON. Waits 30s by default (max 600). Results over ~3K tokens are trimmed, with the full result saved to a file.
+- **`execute(code | file, timeout_secs?)`**: runs inline Luau, or a local `.lua`/`.luau` file, with the full MacSploit ([sUNC](https://docs.sunc.io)) API. Returns `print`/`warn` output (also written to the Roblox console) and return values as JSON. Waits 30s by default (max 600). Results over ~3K tokens are trimmed, with the full result saved to a file.
 - **`dump_scripts(filter?)`**: decompiles the game's client scripts into `.luau` files mirroring the instance tree, for the agent to read and search. `filter` limits it to paths containing the given text.
+
+If the client was kicked or disconnected, results include a `disconnected` reason; the agent can rejoin with `TeleportService` through `execute`.
 
 Files are written to `.macsploit/` in the working directory (with its own `.gitignore`), or to `$TMPDIR/macsploit-mcp/` when there is no project directory.
 
@@ -29,6 +31,10 @@ Files are written to `.macsploit/` in the working directory (with its own `.giti
    ```toml
    [mcp_servers.macsploit]
    command = "/absolute/path/to/macsploit-mcp"
+   ```
+   For clients using an `mcpServers` JSON config (Pi's `~/.pi/agent/mcp.json`, Cursor, …):
+   ```json
+   { "mcpServers": { "macsploit": { "command": "/absolute/path/to/macsploit-mcp" } } }
    ```
 3. Start your client, then open Roblox with MacSploit and join a game. The server installs the bridge on startup; if you were already in a game, rejoin once so autoexec runs it.
 
