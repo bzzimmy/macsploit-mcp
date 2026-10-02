@@ -1,4 +1,4 @@
--- macsploit-mcp bridge --
+-- Macsploit-mcp bridge.
 local genv = getgenv()
 if genv.__macsploit_mcp then return end
 genv.__macsploit_mcp = true

@@ -4,18 +4,21 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::{ServerHandler, tool_handler};
 
 use crate::bridge::Bridge;
+use crate::decompiler::Decompiler;
 
 #[derive(Clone)]
 pub struct Server {
     pub(crate) bridge: Arc<Bridge>,
+    pub(crate) decompiler: Arc<Decompiler>,
     tool_router: ToolRouter<Self>,
 }
 
 impl Server {
-    pub fn new(bridge: Arc<Bridge>) -> Self {
+    pub fn new(bridge: Arc<Bridge>, decompiler: Arc<Decompiler>) -> Self {
         Self {
             bridge,
-            tool_router: Self::execute_router(),
+            decompiler,
+            tool_router: Self::execute_router() + Self::dump_scripts_router(),
         }
     }
 }

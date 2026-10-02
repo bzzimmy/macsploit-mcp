@@ -1,3 +1,4 @@
+pub mod dump_scripts;
 pub mod execute;
 
 use rmcp::ErrorData;

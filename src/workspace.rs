@@ -12,14 +12,19 @@ static ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
     }
 });
 
-pub fn write(subdir: &str, name: &str, contents: &str) -> Result<PathBuf> {
+/// Path of `subdir`, creating it and the root `.gitignore`.
+pub fn dir(subdir: &str) -> Result<PathBuf> {
     let dir = ROOT.join(subdir);
     std::fs::create_dir_all(&dir)?;
     let ignore = ROOT.join(".gitignore");
     if !ignore.exists() {
         std::fs::write(ignore, "*\n")?;
     }
-    let path = dir.join(name);
+    Ok(dir)
+}
+
+pub fn write(subdir: &str, name: &str, contents: &str) -> Result<PathBuf> {
+    let path = dir(subdir)?.join(name);
     std::fs::write(&path, contents)?;
     Ok(path)
 }

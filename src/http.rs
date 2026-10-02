@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{Request, State};
+use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -26,6 +26,7 @@ pub async fn serve(broker: Arc<Broker>, listener: TcpListener) -> anyhow::Result
         .route("/poll", post(poll))
         .route("/result", post(result))
         .route("/execute", post(execute))
+        .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
         .layer(middleware::from_fn(local_only))
         .with_state(broker);
     axum::serve(listener, app).await?;
