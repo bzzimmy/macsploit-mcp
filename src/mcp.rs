@@ -30,8 +30,11 @@ impl Server {
 #[tool_handler(
     router = self.tool_router,
     name = "macsploit",
-    instructions = "Runs Luau inside the user's live Roblox client through MacSploit. \
-                    The executor API is sUNC: https://docs.sunc.io. Filter and aggregate in Luau \
-                    and return only what you need; large results are saved to a file you can grep."
+    instructions = "Runs Luau in the user's live Roblox client through MacSploit (sUNC API: \
+                    https://docs.sunc.io). Understand the game before writing code: inspect live \
+                    state with small `execute` calls, and use `dump_scripts` plus your file tools \
+                    to read its code. Verify results by returning state rather than assuming. \
+                    State persists between runs until a rejoin; code spawned by a run keeps \
+                    running after it returns, and later prints aren't captured."
 )]
 impl ServerHandler for Server {}
