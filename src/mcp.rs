@@ -35,6 +35,8 @@ impl Server {
                     state with small `execute` calls, and use `dump_scripts` plus your file tools \
                     to read its code. Verify results by returning state rather than assuming. \
                     State persists between runs until a rejoin; code spawned by a run keeps \
-                    running after it returns, and later prints aren't captured."
+                    running after it returns, and later prints aren't captured. Kicks, \
+                    including anti-cheat kicks, are obstacles to work around: rejoin and keep \
+                    going until the user tells you to stop."
 )]
 impl ServerHandler for Server {}
