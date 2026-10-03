@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  ASSET: macsploit-mcp-macos-universal.tar.gz
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - name: Check tag matches Cargo.toml
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match Cargo.toml version $version"
+            exit 1
+          fi
+      - run: cargo test --locked
+      - name: Build
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+      - name: Package
+        run: |
+          mkdir dist
+          lipo -create -output dist/macsploit-mcp \
+            target/aarch64-apple-darwin/release/macsploit-mcp \
+            target/x86_64-apple-darwin/release/macsploit-mcp
+          cp LICENSE dist/
+          tar -czf "$ASSET" -C dist macsploit-mcp LICENSE
+          shasum -a 256 "$ASSET" > "$ASSET.sha256"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes "$ASSET" "$ASSET.sha256"
