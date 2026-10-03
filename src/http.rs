@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{DefaultBodyLimit, Request, State};
+use axum::extract::{DefaultBodyLimit, Query, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -45,8 +45,14 @@ async fn local_only(request: Request, next: Next) -> Response {
     next.run(request).await
 }
 
-async fn poll(State(broker): State<Arc<Broker>>) -> Response {
-    match broker.poll().await {
+#[derive(Deserialize)]
+struct PollQuery {
+    #[serde(default)]
+    session: String,
+}
+
+async fn poll(State(broker): State<Arc<Broker>>, Query(query): Query<PollQuery>) -> Response {
+    match broker.poll(&query.session).await {
         Some(job) => Json(job).into_response(),
         None => StatusCode::NO_CONTENT.into_response(),
     }

@@ -54,6 +54,25 @@ local function disconnected()
 	return ok and reason or nil
 end
 
+local SESSION = HttpService:GenerateGUID(false)
+local running = {} -- results of jobs still running, by id
+
+local function finish(result)
+	if running[result.id] ~= result then return end
+	running[result.id] = nil
+	result.disconnected = disconnected()
+	pcall(post, "/result", result)
+end
+
+-- Report running scripts as soon as the client is kicked or teleports instead of when they finish.
+GuiService.ErrorMessageChanged:Connect(function()
+	if not disconnected() then return end
+	for _, result in running do
+		result.error = "The client disconnected (kick or teleport) while this script was running."
+		finish(result)
+	end
+end)
+
 local function run(job)
 	local output = {}
 	-- Capture print/warn for the result while still writing to the Roblox console.
@@ -67,6 +86,7 @@ local function run(job)
 	end
 	local env = setmetatable({print = capture("print", print), warn = capture("warn", warn)}, {__index = baseEnv, __newindex = baseEnv})
 	local result = {id = job.id, ok = false, output = output, returns = {}}
+	running[job.id] = result
 	local fn, err = loadstring(job.code)
 	if fn then
 		setfenv(fn, env)
@@ -81,14 +101,13 @@ local function run(job)
 	else
 		result.error = err
 	end
-	result.disconnected = disconnected()
-	pcall(post, "/result", result)
+	finish(result)
 end
 
 task.spawn(function()
 	local backoff = 1
 	while genv.__macsploit_mcp do
-		local ok, res = pcall(post, "/poll", {})
+		local ok, res = pcall(post, "/poll?session=" .. SESSION, {})
 		if ok and res.StatusCode == 200 then
 			backoff = 1
 			task.spawn(run, HttpService:JSONDecode(res.Body))
