@@ -37,6 +37,8 @@ jobs:
           lipo -create -output dist/macsploit-mcp \
             target/aarch64-apple-darwin/release/macsploit-mcp \
             target/x86_64-apple-darwin/release/macsploit-mcp
+          codesign --force --sign - dist/macsploit-mcp
+          codesign --verify dist/macsploit-mcp
           cp LICENSE dist/
           tar -czf "$ASSET" -C dist macsploit-mcp LICENSE
           shasum -a 256 "$ASSET" > "$ASSET.sha256"
